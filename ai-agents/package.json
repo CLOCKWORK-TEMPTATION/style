@@ -8,9 +8,11 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "demo": "ts-node demo.ts",
+    "demo:phase1": "ts-node examples/phase1-demo.ts",
     "dev": "ts-node index.ts",
     "test": "echo 'Tests will be added in future iterations'",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "watch": "tsc --watch"
   },
   "keywords": [
     "ai",
