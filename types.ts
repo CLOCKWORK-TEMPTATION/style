@@ -53,7 +53,16 @@ export interface ProfessionalDesignResult {
     temp: number;
     condition: string;
     location: string;
+    sources?: string[]; // Google Search Sources
   };
+}
+
+// نتيجة تحليل التلاؤم (AI Safety & Comfort Analysis)
+export interface FitAnalysisResult {
+    compatibilityScore: number; // نسبة التوافق (0-100)
+    safetyIssues: string[]; // قائمة بالمخاطر المحتملة (تعثر، ضيق تنفس)
+    fabricNotes: string; // ملاحظات حول تفاعل القماش
+    movementPrediction: string; // توقع حرية الحركة
 }
 
 // (Legacy types kept for compatibility)
@@ -75,3 +84,5 @@ export interface SimulationConfig {
     action: 'idle' | 'walking' | 'running' | 'fighting';
     actorConstraints?: string; // New field for specific actor limitations
 }
+
+export type ImageGenerationSize = '1K' | '2K' | '4K';

@@ -1,6 +1,8 @@
 {
   "name": "CineFit Pro: Costume Director",
   "description": "Professional AI Costume Designer for Film & TV. Creates production-ready looks based on script analysis, character psychology, and real-world filming conditions.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "microphone"
+  ],
   "prompt": ""
 }

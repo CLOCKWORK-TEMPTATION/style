@@ -19,10 +19,8 @@ export function getFriendlyErrorMessage(error: unknown, context: string): string
         rawMessage = String(error);
     }
 
-    // Check for specific unsupported MIME type error from Gemini API
     if (rawMessage.includes("Unsupported MIME type")) {
         try {
-            // It might be a JSON string like '{"error":{"message":"..."}}'
             const errorJson = JSON.parse(rawMessage);
             const nestedMessage = errorJson?.error?.message;
             if (nestedMessage && nestedMessage.includes("Unsupported MIME type")) {
@@ -30,9 +28,8 @@ export function getFriendlyErrorMessage(error: unknown, context: string): string
                 return `File type '${mimeType}' is not supported. Please use a format like PNG, JPEG, or WEBP.`;
             }
         } catch (e) {
-            // Not a JSON string, but contains the text. Fallthrough to generic message.
+            // Not a JSON string
         }
-        // Generic fallback for any "Unsupported MIME type" error
         return `Unsupported file format. Please upload an image format like PNG, JPEG, or WEBP.`;
     }
     
@@ -40,11 +37,26 @@ export function getFriendlyErrorMessage(error: unknown, context: string): string
 }
 
 /**
- * تحويل رابط صورة (URL) إلى كائن ملف (File).
- * يستخدم هذا لنقل التصميم المولد من الذكاء الاصطناعي إلى غرفة القياس.
+ * Convert File to Base64 string.
+ */
+export const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+        const result = reader.result as string;
+        // Remove data URL prefix if present to get raw base64
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+/**
+ * Convert URL to File object.
  */
 export const urlToFile = async (url: string, filename: string): Promise<File> => {
-    // إذا كان الرابط Base64 data URL
     if (url.startsWith('data:')) {
         const arr = url.split(',');
         const mimeMatch = arr[0].match(/:(.*?);/);
@@ -58,7 +70,6 @@ export const urlToFile = async (url: string, filename: string): Promise<File> =>
         return new File([u8arr], filename, { type: mime });
     }
     
-    // إذا كان رابط عادي (fetch)
     const response = await fetch(url);
     const blob = await response.blob();
     return new File([blob], filename, { type: blob.type });

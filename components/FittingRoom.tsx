@@ -1,379 +1,259 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
-*/
+ */
 import React, { useState, useEffect } from 'react';
-import Canvas from './Canvas';
+import LightingStudio from './LightingStudio';
+import Dashboard from './Dashboard';
+import { ProjectProvider, useProject } from '../contexts/ProjectContext';
+import { evaluateSafety, FabricType, SceneHazard } from '../services/rulesEngine';
+import { generateFullTechPack, TechPackSpec } from '../services/techPackService';
+import { ChevronLeftIcon, PlusIcon, CheckCircleIcon } from './icons';
 import WardrobeModal from './WardrobeSheet';
-import { UploadCloudIcon, PlusIcon, ChevronLeftIcon } from './icons';
-import { generateVirtualFit, generateStressTestVideo } from '../services/geminiService';
-import { WardrobeItem, SimulationConfig } from '../types';
-import { getFriendlyErrorMessage, urlToFile } from '../lib/utils';
+import { WardrobeItem } from '../types';
+import ContinuityTimeline, { SceneCardData } from './ContinuityTimeline';
+import { TechPackView } from './TechPackView';
 
 interface FittingRoomProps {
     onBack: () => void;
     initialGarmentUrl?: string;
     initialGarmentName?: string;
-    initialGarmentDescription?: string;
     initialWeather?: string;
-    initialConstraints?: string;
 }
 
-const FittingRoom: React.FC<FittingRoomProps> = ({ 
-    onBack, 
-    initialGarmentUrl, 
-    initialGarmentName,
-    initialGarmentDescription,
-    initialWeather,
-    initialConstraints
-}) => {
-    // Basic State
-    const [modelFile, setModelFile] = useState<File | null>(null);
-    const [modelPreview, setModelPreview] = useState<string | null>(null);
+const EngineeringWorkspace: React.FC<FittingRoomProps> = ({ onBack, initialGarmentUrl, initialGarmentName, initialWeather }) => {
+    const { projectName, currentRole, addNotification } = useProject();
+    
+    const [textureUrl, setTextureUrl] = useState<string | null>(initialGarmentUrl || null);
+    const [selectedFabric, setSelectedFabric] = useState<FabricType>('cotton');
+    const [hazards, setHazards] = useState<SceneHazard[]>([]);
+    const [safetyReport, setSafetyReport] = useState<any>(null);
+    const [activeTab, setActiveTab] = useState<'3d' | 'data'>('3d');
     const [isWardrobeOpen, setIsWardrobeOpen] = useState(false);
-    const [isLoading, setIsLoading] = useState(false);
-    const [loadingMessage, setLoadingMessage] = useState('');
     
-    // Engine State
-    const [generatedImage, setGeneratedImage] = useState<string | null>(null);
-    const [previousImage, setPreviousImage] = useState<string | null>(null); // For A/B
-    const [videoUrl, setVideoUrl] = useState<string | null>(null);
-    const [isCompareMode, setIsCompareMode] = useState(false);
+    const [projectYear, setProjectYear] = useState<number>(2024);
+    const [techPack, setTechPack] = useState<TechPackSpec | null>(null);
+    const [showTechPackModal, setShowTechPackModal] = useState(false);
     
-    // Simulation Config State
-    const [simConfig, setSimConfig] = useState<SimulationConfig>({
-        lighting: 'natural',
-        physics: 'static',
-        action: 'idle',
-        actorConstraints: ''
-    });
+    const [activeSceneId, setActiveSceneId] = useState('SC-4');
+    const [scenes, setScenes] = useState<SceneCardData[]>([
+        { id: 'SC-1', sceneNumber: 'SC-1', slugline: 'INT. APARTMENT', time: 'DAY', costumeId: 'costume-a', isContinuous: false },
+        { id: 'SC-2', sceneNumber: 'SC-2', slugline: 'EXT. STREET', time: 'DAY', costumeId: 'costume-a', isContinuous: true },
+        { id: 'SC-3', sceneNumber: 'SC-3', slugline: 'INT. CAFE', time: 'DAY', costumeId: 'costume-a', isContinuous: true },
+        { id: 'SC-4', sceneNumber: 'SC-4', slugline: 'EXT. ALLEY', time: 'NIGHT', costumeId: null, isContinuous: true },
+        { id: 'SC-5', sceneNumber: 'SC-5', slugline: 'INT. SAFEHOUSE', time: 'NIGHT', costumeId: 'costume-b', isContinuous: true },
+    ]);
 
-    const [selectedGarment, setSelectedGarment] = useState<WardrobeItem | null>(null);
-    const [currentGarmentFile, setCurrentGarmentFile] = useState<File | null>(null);
-
-    // Initial Load Effect
     useEffect(() => {
-        const loadInitialGarment = async () => {
-            if (initialGarmentUrl && initialGarmentName) {
-                try {
-                    setIsLoading(true);
-                    setLoadingMessage('Initializing Digital Asset...');
-                    const file = await urlToFile(initialGarmentUrl, initialGarmentName);
-                    setSelectedGarment({ id: 'ai-design', name: initialGarmentName, url: initialGarmentUrl });
-                    setCurrentGarmentFile(file);
-                } catch (error) {
-                    console.error("Failed to load initial garment", error);
-                } finally {
-                    setIsLoading(false);
-                    setLoadingMessage('');
-                }
-            }
-        };
-        loadInitialGarment();
-    }, [initialGarmentUrl, initialGarmentName]);
+        const report = evaluateSafety(selectedFabric, hazards);
+        setSafetyReport(report);
+        const tp = generateFullTechPack(selectedFabric, 'coat', projectYear, 'black');
+        setTechPack(tp);
+        if (report.status === 'critical') addNotification(`تنبيه سلامة: ${report.issues[0]}`);
+        if (tp.historicalWarning) addNotification(tp.historicalWarning);
+    }, [selectedFabric, hazards, projectYear, addNotification]);
 
-    const handleModelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-            setModelFile(file);
-            setModelPreview(URL.createObjectURL(file));
-            setGeneratedImage(null);
-            setVideoUrl(null);
-        }
-    };
+    const toggleHazard = (h: SceneHazard) => setHazards(prev => prev.includes(h) ? prev.filter(x => x !== h) : [...prev, h]);
 
-    const handleGarmentSelect = (garmentFile: File, garmentInfo: WardrobeItem) => {
+    const handleGarmentSelect = (file: File, item: WardrobeItem) => {
+        const url = URL.createObjectURL(file);
+        setTextureUrl(url);
         setIsWardrobeOpen(false);
-        setSelectedGarment(garmentInfo);
-        setCurrentGarmentFile(garmentFile);
+        setScenes(prev => prev.map(s => s.id === activeSceneId ? { ...s, costumeId: item.id } : s));
+        addNotification('Scene costume updated. Checking continuity...');
     };
 
-    const handleFitProcess = async () => {
-        if (!modelFile) return alert("Please upload an actor photo first.");
-        if (!currentGarmentFile || !selectedGarment) return alert("No costume selected.");
-
-        // Store current image as previous for A/B testing before generating new one
-        if (generatedImage) {
-            setPreviousImage(generatedImage);
-        }
-
-        setIsLoading(true);
-        setLoadingMessage(`Compiling Simulation: ${simConfig.lighting} lighting + ${simConfig.physics} physics...`);
-        setVideoUrl(null); 
-        setIsCompareMode(false);
-
-        try {
-            const descriptionToUse = (selectedGarment.id === 'ai-design' && initialGarmentDescription) 
-                ? initialGarmentDescription 
-                : selectedGarment.name;
-
-            const contextParts = [];
-            if (initialWeather) contextParts.push(`Weather: ${initialWeather}`);
-            if (initialConstraints) contextParts.push(`Constraints: ${initialConstraints}`);
-            const fitContext = contextParts.join('. ');
-
-            const resultUrl = await generateVirtualFit(
-                modelFile, 
-                currentGarmentFile, 
-                descriptionToUse, 
-                fitContext,
-                simConfig
-            );
-            setGeneratedImage(resultUrl);
-        } catch (error) {
-            alert(getFriendlyErrorMessage(error, "Simulation failed"));
-        } finally {
-            setIsLoading(false);
-            setLoadingMessage('');
-        }
-    };
-
-    const handleVideoExport = async () => {
-        if (!generatedImage) return;
-        setIsLoading(true);
-        setLoadingMessage('Rendering Dynamic Stress Test Video (1080p)... Please wait.');
-        try {
-            const url = await generateStressTestVideo(generatedImage, simConfig.action === 'idle' ? 'walking' : simConfig.action);
-            setVideoUrl(url);
-        } catch (err) {
-            alert(getFriendlyErrorMessage(err, "Video rendering failed"));
-        } finally {
-            setIsLoading(false);
-        }
-    }
-
-    const toggleCompare = () => {
-        if (previousImage && generatedImage) {
-            setIsCompareMode(!isCompareMode);
-        } else {
-            alert("Generate at least two variations to compare.");
-        }
-    };
-
-    const handleStartOver = () => {
-        setModelFile(null);
-        setModelPreview(null);
-        setGeneratedImage(null);
-        setVideoUrl(null);
-        setPreviousImage(null);
-        setIsCompareMode(false);
-        if (!initialGarmentUrl) {
-            setSelectedGarment(null);
-            setCurrentGarmentFile(null);
-        }
+    const handleFixContinuity = (targetSceneId: string, sourceOutfitId: string) => {
+        setScenes(prev => prev.map(s => s.id === targetSceneId ? { ...s, costumeId: sourceOutfitId } : s));
+        addNotification(`Continuity fixed for ${targetSceneId}`);
     };
 
     return (
-        <div className="flex flex-col h-screen bg-gray-50">
-            {/* Header */}
-            <div className="h-16 bg-white border-b border-gray-200 flex items-center px-4 justify-between z-20">
-                <button onClick={onBack} className="flex items-center text-sm font-bold text-gray-600 hover:text-gray-900">
-                    <ChevronLeftIcon className="w-4 h-4 mr-1" />
-                    BACK TO HUB
-                </button>
-                <div className="flex flex-col items-center">
-                    <h2 className="text-lg font-serif font-bold tracking-wider">REALISM ENGINE v2.0</h2>
-                    <span className="text-[10px] text-green-600 font-mono font-bold tracking-widest uppercase">● Online</span>
+        <div className="flex flex-col h-screen bg-[#09090b] text-white overflow-hidden font-sans">
+            
+            {/* Top Navigation Bar */}
+            <div className="h-14 border-b border-white/10 flex items-center px-6 justify-between z-30 bg-[#09090b]/90 backdrop-blur-sm">
+                <div className="flex items-center gap-6">
+                    <button onClick={onBack} className="text-zinc-500 hover:text-white transition-colors flex items-center gap-2 text-xs font-bold uppercase tracking-widest">
+                        <ChevronLeftIcon className="w-4 h-4" /> Exit
+                    </button>
+                    <div className="h-4 w-px bg-zinc-800"></div>
+                    <div>
+                        <h2 className="text-sm font-bold tracking-widest text-white">{projectName}</h2>
+                        <span className="text-[9px] text-[#d4b483] font-mono uppercase tracking-widest">Scene: {activeSceneId}</span>
+                    </div>
                 </div>
-                <div className="w-20"></div> 
+                
+                <div className="flex items-center gap-4">
+                     {/* Year Selector */}
+                     <div className="flex items-center bg-zinc-900 rounded border border-zinc-800 px-3 py-1">
+                        <span className="text-[10px] font-bold text-zinc-500 mr-2 uppercase">Era:</span>
+                        <input 
+                            type="number" 
+                            value={projectYear} 
+                            onChange={(e) => setProjectYear(parseInt(e.target.value))}
+                            className="bg-transparent w-12 text-xs font-bold text-white outline-none text-right font-mono"
+                        />
+                     </div>
+
+                    <div className="flex bg-zinc-900 rounded p-1 border border-zinc-800">
+                        <button 
+                            onClick={() => setActiveTab('3d')}
+                            className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded transition-all ${activeTab === '3d' ? 'bg-white text-black' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        >
+                            Viewport
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('data')}
+                            className={`px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest rounded transition-all ${activeTab === 'data' ? 'bg-white text-black' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        >
+                            Analysis
+                        </button>
+                    </div>
+                </div>
             </div>
 
-            {/* Main Workspace */}
-            <div className="flex-grow flex flex-col md:flex-row overflow-hidden relative">
+            <div className="flex-grow flex overflow-hidden relative">
                 
-                {/* 1. Simulation Controls (Left Sidebar) */}
-                <div className="w-full md:w-64 bg-gray-900 text-white p-6 overflow-y-auto flex flex-col z-20 shadow-xl border-r border-gray-800">
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-6 border-b border-gray-700 pb-2">Physics & Environment</h3>
-                    
-                    {/* Lighting Control */}
-                    <div className="mb-6">
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Lighting Synthesis</label>
-                        <div className="grid grid-cols-2 gap-2">
-                            {['natural', 'studio', 'dramatic', 'neon'].map((mode) => (
-                                <button
-                                    key={mode}
-                                    onClick={() => setSimConfig({...simConfig, lighting: mode as any})}
-                                    className={`text-xs py-2 px-1 border rounded transition-colors ${simConfig.lighting === mode ? 'bg-white text-black border-white' : 'border-gray-700 text-gray-400 hover:border-gray-500'}`}
-                                >
-                                    {mode}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Physics Control */}
-                    <div className="mb-6">
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Fabric Physics</label>
-                        <select 
-                            value={simConfig.physics}
-                            onChange={(e) => setSimConfig({...simConfig, physics: e.target.value as any})}
-                            className="w-full bg-gray-800 border border-gray-700 text-white text-xs p-2 rounded focus:outline-none focus:border-white"
-                        >
-                            <option value="static">Static (Standard)</option>
-                            <option value="flow">High Flow (Windy)</option>
-                            <option value="heavy">Heavy Weight (Wool/Leather)</option>
-                            <option value="wet">Wet/Damp (Environmental)</option>
-                        </select>
-                    </div>
-
-                    {/* Action Control */}
-                    <div className="mb-6">
-                         <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Pose / Action</label>
-                         <div className="flex flex-col gap-2">
-                            {['idle', 'walking', 'running', 'fighting'].map((action) => (
+                {/* Main Viewport */}
+                <div className="flex-grow relative flex flex-col">
+                     {activeTab === '3d' ? (
+                        <div className="w-full h-full relative">
+                            <LightingStudio textureUrl={textureUrl || undefined} />
+                            
+                            {/* Overlay Controls for Quick Material Change (Floating) */}
+                            <div className="absolute top-6 right-6 z-20 flex flex-col gap-2">
                                 <button 
-                                    key={action}
-                                    onClick={() => setSimConfig({...simConfig, action: action as any})}
-                                    className={`flex items-center text-xs text-left px-2 py-2 rounded transition-all ${simConfig.action === action ? 'bg-blue-900/50 text-blue-200 border border-blue-800' : 'text-gray-500 hover:text-gray-300'}`}
+                                    onClick={() => setIsWardrobeOpen(true)}
+                                    className="bg-black/60 backdrop-blur border border-white/10 text-white p-3 rounded-full hover:bg-[#d4b483] hover:text-black transition-colors shadow-xl"
+                                    title="Change Outfit"
                                 >
-                                    <span className={`w-2 h-2 rounded-full mr-2 ${simConfig.action === action ? 'bg-blue-400' : 'bg-gray-600'}`}></span>
-                                    {action.charAt(0).toUpperCase() + action.slice(1)}
+                                    <PlusIcon className="w-5 h-5" />
                                 </button>
-                            ))}
-                         </div>
-                    </div>
-
-                    {/* Actor Constraints */}
-                    <div className="mb-6">
-                        <div className="flex items-center justify-between mb-2">
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400">Actor Constraints</label>
-                            <span className="text-[9px] text-gray-500 bg-gray-800 px-1 rounded">OPTIONAL</span>
-                        </div>
-                        <textarea
-                            value={simConfig.actorConstraints || ''}
-                            onChange={(e) => setSimConfig({...simConfig, actorConstraints: e.target.value})}
-                            placeholder="e.g. Uncomfortable with tight collars, restricted arm movement, sensitive skin..."
-                            className="w-full bg-gray-800 border border-gray-700 text-white text-xs p-2 rounded focus:outline-none focus:border-white resize-none h-20 placeholder-gray-500"
-                        />
-                    </div>
-
-                    <div className="mt-auto pt-6 border-t border-gray-800">
-                        <button 
-                            onClick={handleVideoExport}
-                            disabled={!generatedImage || isLoading}
-                            className="w-full py-3 bg-red-900/80 hover:bg-red-800 text-red-100 border border-red-900/50 rounded flex flex-col items-center justify-center transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                            <span className="text-xs font-bold uppercase tracking-widest">Run Stress Test</span>
-                            <span className="text-[9px] opacity-70">Generate Video (1080p)</span>
-                        </button>
-                    </div>
-                </div>
-
-                {/* 2. Canvas Area (Center) */}
-                <div className="flex-grow relative bg-gray-100 flex items-center justify-center p-4">
-                    {!modelPreview ? (
-                         <div className="text-center animate-fade-in flex flex-col items-center">
-                            <div className="mb-8 flex flex-col items-center gap-2">
-                                <span className="bg-gray-900 text-white text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full">Step 1</span>
-                                <h3 className="text-xl font-serif text-gray-800">Digitize Actor</h3>
                             </div>
-                            <label className="cursor-pointer group block relative">
-                                <div className="w-64 h-80 border-4 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center bg-white group-hover:border-gray-900 transition-all shadow-sm group-hover:shadow-lg group-hover:-translate-y-1">
-                                    <div className="p-4 bg-gray-50 rounded-full mb-4 group-hover:bg-gray-100 transition-colors">
-                                        <UploadCloudIcon className="w-8 h-8 text-gray-400 group-hover:text-gray-900" />
-                                    </div>
-                                    <span className="text-sm font-bold uppercase tracking-widest text-gray-500 group-hover:text-gray-900">Upload Photo</span>
+
+                            {/* Historical Warning Overlay */}
+                            {techPack?.historicalWarning && (
+                                <div className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-yellow-900/90 text-yellow-100 px-6 py-3 rounded border border-yellow-600 shadow-2xl z-30 flex items-center gap-3 backdrop-blur-md">
+                                    <span className="text-xl">⚠️</span>
+                                    <p className="text-xs font-bold uppercase tracking-wide">{techPack.historicalWarning}</p>
                                 </div>
-                                <input type="file" className="hidden" accept="image/*" onChange={handleModelUpload} />
-                            </label>
-                            <p className="mt-6 text-xs text-gray-400 font-mono max-w-xs leading-relaxed">
-                                Upload a full-body or mid-shot of the actor. <br/>
-                                This will serve as the base for all physics simulations.
-                            </p>
-                         </div>
+                            )}
+                        </div>
                     ) : (
-                        <Canvas 
-                            displayImageUrl={generatedImage || modelPreview} 
-                            videoUrl={videoUrl}
-                            compareImages={isCompareMode && previousImage && generatedImage ? { left: previousImage, right: generatedImage } : null}
-                            onStartOver={handleStartOver}
-                            isLoading={isLoading}
-                            loadingMessage={loadingMessage}
-                            onSelectPose={() => {}}
-                            poseInstructions={[]}
-                            currentPoseIndex={0}
-                            availablePoseKeys={[]}
-                        />
+                        <Dashboard />
                     )}
+                    
+                    {/* Continuity Rail (Bottom) */}
+                    <div className="absolute bottom-0 left-0 w-full z-20">
+                        <ContinuityTimeline 
+                            scenes={scenes} 
+                            activeSceneId={activeSceneId} 
+                            onSceneSelect={setActiveSceneId}
+                            onFixContinuity={handleFixContinuity}
+                        />
+                    </div>
                 </div>
 
-                {/* 3. Asset & Render Controls (Right Sidebar) */}
-                <div className="bg-white border-l border-gray-200 p-6 w-full md:w-80 flex flex-col z-10 shadow-xl overflow-y-auto">
-                     {/* Compare Toggle */}
-                     {previousImage && generatedImage && !videoUrl && (
-                        <button 
-                            onClick={toggleCompare}
-                            className={`w-full mb-4 py-2 px-4 rounded text-xs font-bold uppercase tracking-widest border transition-colors ${isCompareMode ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'}`}
-                        >
-                            {isCompareMode ? 'Exit Comparison' : 'A/B Compare Mode'}
-                        </button>
-                    )}
-
-                    {/* Source Info (if from Director) */}
-                    {initialGarmentName && (
-                        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-md">
-                            <div className="text-[10px] font-bold text-blue-500 uppercase tracking-widest mb-1">Asset: Script Analysis</div>
-                            <p className="text-xs text-blue-900 font-medium line-clamp-2">{initialGarmentName}</p>
-                        </div>
-                    )}
-
-                    <div className="mb-6">
-                        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">1. Digital Actor</h3>
-                        <div className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${modelPreview ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-100'}`}>
-                            <div className={`w-3 h-3 rounded-full ${modelPreview ? 'bg-green-500' : 'bg-red-400 animate-pulse'}`}></div>
-                            <span className={`text-sm font-medium ${modelPreview ? 'text-green-800' : 'text-red-800'}`}>
-                                {modelPreview ? 'Model Active' : 'No Model Uploaded'}
-                            </span>
-                        </div>
+                {/* Right Floating Panel (Inspector) */}
+                <div className="absolute top-6 right-6 bottom-40 w-72 bg-[#09090b]/80 backdrop-blur-xl border border-white/10 rounded-xl flex flex-col z-10 shadow-2xl overflow-hidden">
+                    <div className="p-4 border-b border-white/5 bg-black/20">
+                        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-[0.2em]">Inspector</h3>
                     </div>
-
-                    <div className="mb-6">
-                        <div className="flex justify-between items-center mb-3">
-                            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">2. Garment Asset</h3>
-                            <button 
-                                onClick={() => setIsWardrobeOpen(true)} 
-                                disabled={!modelPreview} 
-                                className={`text-[10px] font-bold underline transition-colors ${!modelPreview ? 'text-gray-300 cursor-not-allowed' : 'text-gray-900 hover:text-black'}`}
-                                title={!modelPreview ? "Upload actor first" : "Select Garment"}
-                            >
-                                SWAP
-                            </button>
+                    
+                    <div className="p-4 space-y-6 overflow-y-auto custom-scrollbar">
+                        {/* Fabric Selector */}
+                        <div>
+                            <label className="block text-[10px] font-bold text-[#d4b483] uppercase mb-2">Material Physics</label>
+                             <select 
+                                value={selectedFabric}
+                                onChange={(e) => setSelectedFabric(e.target.value as FabricType)}
+                                className="w-full bg-zinc-900 border border-zinc-700 text-xs text-white p-2 rounded focus:border-[#d4b483] outline-none"
+                             >
+                                 <option value="cotton">Cotton</option>
+                                 <option value="polyester">Polyester</option>
+                                 <option value="silk">Silk</option>
+                                 <option value="wool">Wool</option>
+                                 <option value="leather">Leather</option>
+                             </select>
                         </div>
                         
-                        {selectedGarment ? (
-                             <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                <img src={selectedGarment.url} className="w-12 h-12 object-cover rounded bg-white border border-gray-200" alt="garment" />
-                                <div className="overflow-hidden">
-                                    <span className="block text-xs font-bold text-gray-900 truncate">{selectedGarment.name}</span>
-                                    <span className="block text-[10px] text-gray-500 truncate">Ready to Render</span>
-                                </div>
-                             </div>
-                        ) : (
-                            <div className={`text-sm italic p-3 rounded-lg border border-dashed transition-colors ${!modelPreview ? 'bg-gray-50 text-gray-300 border-gray-200' : 'bg-white text-gray-400 border-gray-300'}`}>
-                                {!modelPreview ? "Locked: Upload Actor" : "No asset selected"}
+                        {/* Hazards */}
+                        <div>
+                            <label className="block text-[10px] font-bold text-[#d4b483] uppercase mb-2">Scene Hazards</label>
+                            <div className="flex flex-wrap gap-2">
+                                {['fire', 'water', 'stunt'].map((h) => (
+                                    <button
+                                        key={h}
+                                        onClick={() => toggleHazard(h as SceneHazard)}
+                                        className={`px-2 py-1 text-[9px] font-bold uppercase rounded border transition-colors ${hazards.includes(h as SceneHazard) ? 'bg-red-900/50 text-red-200 border-red-500' : 'bg-transparent text-zinc-500 border-zinc-700 hover:border-zinc-500'}`}
+                                    >
+                                        {h}
+                                    </button>
+                                ))}
                             </div>
-                        )}
+                        </div>
+
+                        {/* Safety Report */}
+                        <div className="p-4 bg-zinc-900/50 rounded border border-white/5">
+                            <div className="flex justify-between items-center mb-2">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase">Safety Score</span>
+                                <span className={`text-lg font-mono font-bold ${safetyReport?.score > 80 ? 'text-green-500' : 'text-red-500'}`}>{safetyReport?.score}%</span>
+                            </div>
+                            {safetyReport?.issues.map((issue: string, i: number) => (
+                                <div key={i} className="text-[9px] text-red-300 border-l-2 border-red-500 pl-2 py-1 mb-1 leading-tight">
+                                    {issue}
+                                </div>
+                            ))}
+                        </div>
                     </div>
 
-                    <button 
-                        onClick={handleFitProcess}
-                        disabled={!modelPreview || !selectedGarment || isLoading}
-                        className="mt-auto w-full py-4 bg-gray-900 text-white font-bold tracking-widest uppercase text-xs hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg"
-                    >
-                        {isLoading ? 'RENDERING...' : 'RENDER SIMULATION'}
-                        {!isLoading && <PlusIcon className="w-4 h-4" />}
-                    </button>
+                    {/* Footer Actions */}
+                    <div className="p-4 border-t border-white/5 bg-black/20 mt-auto">
+                        <button 
+                            onClick={() => setShowTechPackModal(true)}
+                            className="w-full bg-white text-black py-3 rounded text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-[#d4b483] transition-colors"
+                        >
+                            Generate Tech Pack
+                        </button>
+                    </div>
                 </div>
             </div>
+
+            {/* Tech Pack Modal */}
+            {showTechPackModal && techPack && (
+                <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowTechPackModal(false)}>
+                    <div className="bg-white text-black p-0 w-full max-w-md shadow-2xl rounded-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="bg-zinc-900 text-white p-4 flex justify-between items-center">
+                            <h3 className="font-serif text-lg tracking-wider">TECH PACK GENERATOR</h3>
+                            <button onClick={() => setShowTechPackModal(false)} className="text-zinc-500 hover:text-white">✕</button>
+                        </div>
+                        <div className="p-6">
+                            <TechPackView data={techPack as any} fabricName={selectedFabric} />
+                            <button className="w-full mt-4 border-2 border-zinc-900 text-zinc-900 font-bold py-2 hover:bg-zinc-900 hover:text-white transition-colors text-xs uppercase tracking-widest">
+                                Export PDF
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <WardrobeModal 
                 isOpen={isWardrobeOpen}
                 onClose={() => setIsWardrobeOpen(false)}
                 onGarmentSelect={handleGarmentSelect}
-                activeGarmentIds={selectedGarment ? [selectedGarment.id] : []}
-                isLoading={isLoading}
+                activeGarmentIds={[]}
+                isLoading={false}
             />
         </div>
+    );
+};
+
+const FittingRoom: React.FC<FittingRoomProps> = (props) => {
+    return (
+        <ProjectProvider>
+            <EngineeringWorkspace {...props} />
+        </ProjectProvider>
     );
 };
 

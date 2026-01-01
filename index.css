@@ -3,70 +3,89 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --gold-accent: #d4b483;
+}
+
 body {
-  background-color: #fff; /* Light gray background */
-  color: #2a2a2a; /* Dark text color */
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
 }
 
-/* Animation for gentle fade-in of components */
+/* Cinematic Grain Overlay */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+h1, h2, h3, h4, .font-serif {
+  font-family: 'Instrument Serif', serif;
+}
+
+/* Animations */
 @keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.animate-fade-in {
-  animation: fade-in 0.6s ease-out forwards;
-}
+.animate-fade-in { animation: fade-in 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
 
-/* Animation for the main canvas image to zoom into focus */
-@keyframes zoom-in {
-  from {
-    transform: scale(0.95);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
-}
-.animate-zoom-in {
-  animation: zoom-in 0.7s cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
-
-/* Animation for the wardrobe sheet to slide up from the bottom */
 @keyframes slide-up {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
-.animate-slide-up {
-  animation: slide-up 0.6s cubic-bezier(0.25, 1, 0.5, 1) forwards;
-}
+.animate-slide-up { animation: slide-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
-/* Custom scrollbar for a more integrated look */
+/* Custom Scrollbar (Sleek Dark) */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
-
 ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db; /* Light gray scrollbar */
-  border-radius: 4px;
+  background: #3f3f46;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #71717a;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af; /* Darker gray on hover */
+/* Utilities */
+.glass-panel {
+  background: rgba(24, 24, 27, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.gold-glow {
+  box-shadow: 0 0 20px rgba(212, 180, 131, 0.15);
+}
+
+.input-cinematic {
+  background: transparent;
+  border-bottom: 1px solid #3f3f46;
+  transition: all 0.3s ease;
+}
+.input-cinematic:focus {
+  border-color: #d4b483;
+  box-shadow: 0 4px 12px -2px rgba(212, 180, 131, 0.1);
 }

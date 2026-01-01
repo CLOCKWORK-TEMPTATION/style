@@ -4,10 +4,10 @@
 */
 import React, { useState } from 'react';
 import { defaultWardrobe } from '../wardrobe';
-import type { WardrobeItem } from '../types';
-import { UploadCloudIcon, CheckCircleIcon, XIcon, SparklesIcon } from './icons';
+import type { WardrobeItem, ImageGenerationSize } from '../types';
+import { UploadCloudIcon, CheckCircleIcon, XIcon, SparklesIcon, WandIcon } from './icons';
 import { AnimatePresence, motion } from 'framer-motion';
-import { generateGarmentAsset } from '../services/geminiService';
+import { generateGarmentAsset, editGarmentImage } from '../services/geminiService';
 import Spinner from './Spinner';
 import { urlToFile } from '../lib/utils';
 
@@ -23,11 +23,12 @@ interface WardrobeModalProps {
 const WardrobeModal: React.FC<WardrobeModalProps> = ({ isOpen, onClose, onGarmentSelect, activeGarmentIds, isLoading }) => {
     const [activeTab, setActiveTab] = useState<'library' | 'ai'>('library');
     const [error, setError] = useState<string | null>(null);
-    
-    // AI Gen State
     const [prompt, setPrompt] = useState('');
+    const [imageSize, setImageSize] = useState<ImageGenerationSize>('2K');
     const [isGenerating, setIsGenerating] = useState(false);
     const [generatedItem, setGeneratedItem] = useState<WardrobeItem | null>(null);
+    const [editingItem, setEditingItem] = useState<WardrobeItem | null>(null);
+    const [editPrompt, setEditPrompt] = useState('');
 
     const handleGarmentClick = async (item: WardrobeItem) => {
         if (isLoading || activeGarmentIds.includes(item.id)) return;
@@ -36,22 +37,17 @@ const WardrobeModal: React.FC<WardrobeModalProps> = ({ isOpen, onClose, onGarmen
             const file = await urlToFile(item.url, `${item.name || item.id}.png`);
             onGarmentSelect(file, item);
         } catch (err) {
-            console.error("Garment select error:", err);
-            setError('Could not load wardrobe item. Please try again.');
+            setError('Could not load item.');
         }
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
-            if (!file.type.startsWith('image/')) {
-                setError('Please select an image file.');
-                return;
-            }
             const customGarmentInfo: WardrobeItem = {
                 id: `custom-${Date.now()}`,
                 name: file.name,
-                url: URL.createObjectURL(file), // for preview, not used by API
+                url: URL.createObjectURL(file),
             };
             onGarmentSelect(file, customGarmentInfo);
         }
@@ -61,26 +57,31 @@ const WardrobeModal: React.FC<WardrobeModalProps> = ({ isOpen, onClose, onGarmen
         if (!prompt.trim()) return;
         setIsGenerating(true);
         setError(null);
-        setGeneratedItem(null);
         try {
-            const url = await generateGarmentAsset(prompt);
-            setGeneratedItem({
-                id: `gen-${Date.now()}`,
-                name: prompt,
-                url: url
-            });
-        } catch (err) {
-            console.error("Generation error:", err);
-            setError('Failed to generate garment. Please try again.');
-        } finally {
-            setIsGenerating(false);
-        }
+            const url = await generateGarmentAsset(prompt, imageSize);
+            setGeneratedItem({ id: `gen-${Date.now()}`, name: prompt, url: url });
+        } catch (err) { setError('Failed to generate.'); } 
+        finally { setIsGenerating(false); }
+    };
+    
+    const startEditing = (item: WardrobeItem) => {
+        setEditingItem(item);
+        setActiveTab('ai');
+        setEditPrompt('');
+        setGeneratedItem(item);
+        setPrompt('');
     };
 
-    const handleUseGenerated = async () => {
-        if (generatedItem) {
-            await handleGarmentClick(generatedItem);
-        }
+    const handleEdit = async () => {
+        if (!editPrompt.trim() || !editingItem) return;
+        setIsGenerating(true);
+        try {
+            const file = await urlToFile(editingItem.url, "source.png");
+            const newUrl = await editGarmentImage(file, editPrompt);
+            setGeneratedItem({ id: `edit-${Date.now()}`, name: `${editingItem.name} (Edited)`, url: newUrl });
+            setEditingItem(null);
+        } catch (err) { setError("Failed to edit."); } 
+        finally { setIsGenerating(false); }
     };
 
   return (
@@ -91,125 +92,139 @@ const WardrobeModal: React.FC<WardrobeModalProps> = ({ isOpen, onClose, onGarmen
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 onClick={onClose}
-                className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 flex items-center justify-center p-4"
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
             >
                 <motion.div
                     initial={{ scale: 0.95, y: 20 }}
                     animate={{ scale: 1, y: 0 }}
                     exit={{ scale: 0.95, y: 20 }}
                     onClick={(e) => e.stopPropagation()}
-                    className="relative bg-white rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl overflow-hidden"
+                    className="relative bg-[#18181b] border border-white/10 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
                 >
-                    <div className="flex items-center justify-between p-4 border-b">
-                        <h2 className="text-xl font-serif tracking-wider text-gray-800">Select Garment</h2>
-                        <button onClick={onClose} className="p-1 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+                    <div className="flex items-center justify-between p-6 border-b border-white/5">
+                        <h2 className="text-xl font-serif text-white tracking-wider">Wardrobe Department</h2>
+                        <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
                             <XIcon className="w-6 h-6"/>
                         </button>
                     </div>
 
-                    {/* Tabs */}
-                    <div className="flex border-b">
+                    <div className="flex border-b border-white/5">
                         <button 
                             onClick={() => setActiveTab('library')}
-                            className={`flex-1 py-3 text-sm font-bold uppercase tracking-widest transition-colors ${activeTab === 'library' ? 'bg-white text-gray-900 border-b-2 border-gray-900' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                            className={`flex-1 py-4 text-[10px] font-bold uppercase tracking-[0.2em] transition-colors ${activeTab === 'library' ? 'bg-white/5 text-white border-b-2 border-[#d4b483]' : 'text-zinc-500 hover:text-zinc-300'}`}
                         >
-                            Library / Upload
+                            Archive
                         </button>
                         <button 
-                            onClick={() => setActiveTab('ai')}
-                            className={`flex-1 py-3 text-sm font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 ${activeTab === 'ai' ? 'bg-white text-purple-700 border-b-2 border-purple-700' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                            onClick={() => { setActiveTab('ai'); setEditingItem(null); setGeneratedItem(null); }}
+                            className={`flex-1 py-4 text-[10px] font-bold uppercase tracking-[0.2em] transition-colors flex items-center justify-center gap-2 ${activeTab === 'ai' ? 'bg-white/5 text-[#d4b483] border-b-2 border-[#d4b483]' : 'text-zinc-500 hover:text-zinc-300'}`}
                         >
                             <SparklesIcon className="w-4 h-4" />
-                            AI Gen
+                            AI Atelier
                         </button>
                     </div>
 
-                    <div className="p-6 overflow-y-auto flex-grow">
+                    <div className="p-8 overflow-y-auto flex-grow custom-scrollbar bg-[#09090b]">
                         {activeTab === 'library' && (
                             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
                                 {defaultWardrobe.map((item) => {
                                 const isActive = activeGarmentIds.includes(item.id);
                                 return (
-                                    <button
-                                    key={item.id}
-                                    onClick={() => handleGarmentClick(item)}
-                                    disabled={isLoading || isActive}
-                                    className="relative aspect-square border rounded-lg overflow-hidden transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-800 group disabled:opacity-60 disabled:cursor-not-allowed"
-                                    aria-label={`Select ${item.name}`}
-                                    >
-                                    <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
-                                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <p className="text-white text-xs font-bold text-center p-1">{item.name}</p>
-                                    </div>
-                                    {isActive && (
-                                        <div className="absolute inset-0 bg-gray-900/70 flex items-center justify-center">
-                                            <CheckCircleIcon className="w-8 h-8 text-white" />
+                                    <div key={item.id} className="relative group aspect-square">
+                                        <button
+                                            onClick={() => handleGarmentClick(item)}
+                                            disabled={isLoading || isActive}
+                                            className="w-full h-full border border-white/10 rounded-lg overflow-hidden transition-all duration-300 hover:border-[#d4b483] disabled:opacity-50"
+                                        >
+                                            <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                                            {isActive && (
+                                                <div className="absolute inset-0 bg-[#d4b483]/80 flex items-center justify-center">
+                                                    <CheckCircleIcon className="w-8 h-8 text-black" />
+                                                </div>
+                                            )}
+                                        </button>
+                                        
+                                        {!isActive && (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); startEditing(item); }}
+                                                className="absolute top-1 right-1 bg-black/80 text-[#d4b483] p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white hover:text-black"
+                                            >
+                                                <WandIcon className="w-3 h-3" />
+                                            </button>
+                                        )}
+                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                             <p className="text-white text-[9px] font-bold truncate">{item.name}</p>
                                         </div>
-                                    )}
-                                    </button>
+                                    </div>
                                 );
                                 })}
-                                <label htmlFor="custom-garment-upload" className={`relative aspect-square border-2 border-dashed rounded-lg flex flex-col items-center justify-center text-gray-500 transition-colors ${isLoading ? 'cursor-not-allowed bg-gray-100' : 'hover:border-gray-400 hover:text-gray-600 cursor-pointer'}`}>
-                                    <UploadCloudIcon className="w-6 h-6 mb-1"/>
-                                    <span className="text-xs text-center">Upload</span>
-                                    <input id="custom-garment-upload" type="file" className="hidden" accept="image/png, image/jpeg, image/webp, image/avif, image/heic, image/heif" onChange={handleFileChange} disabled={isLoading}/>
+                                <label className="relative aspect-square border border-dashed border-zinc-700 rounded-lg flex flex-col items-center justify-center text-zinc-500 hover:text-white hover:border-zinc-500 transition-colors cursor-pointer hover:bg-white/5">
+                                    <UploadCloudIcon className="w-6 h-6 mb-2"/>
+                                    <span className="text-[9px] uppercase tracking-widest">Upload</span>
+                                    <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} disabled={isLoading}/>
                                 </label>
                             </div>
                         )}
 
                         {activeTab === 'ai' && (
                             <div className="flex flex-col h-full">
-                                <div className="mb-4">
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Describe the Item</label>
-                                    <div className="flex gap-2">
+                                <div className="mb-6">
+                                    {editingItem ? (
+                                         <div className="flex items-center justify-between mb-2">
+                                            <label className="text-[10px] font-bold text-[#d4b483] uppercase tracking-widest">Editing Mode</label>
+                                            <button onClick={() => setEditingItem(null)} className="text-[10px] text-zinc-500 hover:text-white">Cancel</button>
+                                        </div>
+                                    ) : (
+                                        <div className="flex justify-between items-end mb-2">
+                                            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Prompt</label>
+                                            <select value={imageSize} onChange={(e) => setImageSize(e.target.value as any)} className="bg-zinc-900 text-white text-[10px] border border-zinc-700 rounded px-2 py-1">
+                                                <option value="1K">1K Res</option>
+                                                <option value="2K">2K Res</option>
+                                                <option value="4K">4K Res</option>
+                                            </select>
+                                        </div>
+                                    )}
+                                    
+                                    <div className="flex gap-0 border border-zinc-700 rounded-lg overflow-hidden focus-within:border-[#d4b483] transition-colors">
                                         <input 
                                             type="text" 
-                                            value={prompt}
-                                            onChange={(e) => setPrompt(e.target.value)}
-                                            placeholder="e.g. A distressed brown leather trench coat, cyberpunk style"
-                                            className="flex-grow p-3 bg-gray-50 border border-gray-300 rounded focus:border-purple-500 focus:outline-none text-sm"
-                                            onKeyDown={(e) => e.key === 'Enter' && handleGenerate()}
+                                            value={editingItem ? editPrompt : prompt}
+                                            onChange={(e) => editingItem ? setEditPrompt(e.target.value) : setPrompt(e.target.value)}
+                                            placeholder={editingItem ? "How to change it?" : "Describe the garment..."}
+                                            className="flex-grow p-4 bg-zinc-900 text-white text-sm focus:outline-none placeholder:text-zinc-600"
+                                            onKeyDown={(e) => e.key === 'Enter' && (editingItem ? handleEdit() : handleGenerate())}
                                         />
                                         <button 
-                                            onClick={handleGenerate}
-                                            disabled={isGenerating || !prompt.trim()}
-                                            className="bg-purple-700 text-white px-4 py-2 rounded font-bold text-xs uppercase tracking-wider hover:bg-purple-800 disabled:opacity-50 transition-colors"
+                                            onClick={editingItem ? handleEdit : handleGenerate}
+                                            disabled={isGenerating}
+                                            className="bg-white text-black px-6 py-2 font-bold text-[10px] uppercase tracking-widest hover:bg-[#d4b483] disabled:opacity-50 transition-colors"
                                         >
-                                            {isGenerating ? 'Creating...' : 'Generate'}
+                                            {isGenerating ? 'Processing' : (editingItem ? 'Refine' : 'Generate')}
                                         </button>
                                     </div>
                                 </div>
 
-                                <div className="flex-grow flex items-center justify-center bg-gray-50 border border-gray-200 rounded-lg relative min-h-[250px]">
+                                <div className="flex-grow flex items-center justify-center bg-zinc-900/50 border border-zinc-800 rounded-lg relative min-h-[250px] overflow-hidden">
                                     {isGenerating ? (
-                                        <div className="flex flex-col items-center">
-                                            <Spinner />
-                                            <p className="text-xs text-gray-500 mt-2 animate-pulse">Designing Asset...</p>
-                                        </div>
+                                        <Spinner />
                                     ) : generatedItem ? (
-                                        <div className="relative w-full h-full flex items-center justify-center p-4">
-                                            <img src={generatedItem.url} alt="Generated Asset" className="max-w-full max-h-[300px] object-contain shadow-lg rounded" />
-                                            <div className="absolute bottom-4">
-                                                <button 
-                                                    onClick={handleUseGenerated}
-                                                    disabled={isLoading}
-                                                    className="bg-gray-900 text-white px-6 py-2 rounded-full font-bold text-sm shadow-xl hover:bg-black transition-transform active:scale-95"
-                                                >
-                                                    Select This Item
-                                                </button>
+                                        <div className="relative w-full h-full flex flex-col items-center justify-center p-4 group">
+                                            <img src={generatedItem.url} alt="Generated" className="max-h-[250px] object-contain drop-shadow-2xl" />
+                                            <div className="absolute bottom-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                                                <button onClick={() => startEditing(generatedItem!)} className="bg-zinc-800 text-white px-4 py-2 rounded-full text-xs font-bold hover:bg-black">Edit</button>
+                                                <button onClick={() => handleGarmentClick(generatedItem!)} className="bg-[#d4b483] text-black px-6 py-2 rounded-full text-xs font-bold hover:bg-white">Select</button>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="text-center text-gray-400">
+                                        <div className="text-center text-zinc-700">
                                             <SparklesIcon className="w-12 h-12 mx-auto mb-2 opacity-20" />
-                                            <p className="text-sm">Enter a prompt to generate a unique fashion item.</p>
+                                            <p className="text-xs">AI Canvas Empty</p>
                                         </div>
                                     )}
                                 </div>
                             </div>
                         )}
-
-                        {error && <p className="text-red-500 text-sm mt-4 text-center">{error}</p>}
+                        {error && <p className="text-red-500 text-xs mt-4 text-center">{error}</p>}
                     </div>
                 </motion.div>
             </motion.div>

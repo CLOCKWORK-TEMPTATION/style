@@ -5,22 +5,28 @@
 import React from 'react';
 import { ShirtIcon } from './icons';
 
-/**
- * مكون الرأس (Header)
- * يعرض اسم الاستوديو وشعاره
- */
 const Header: React.FC = () => {
   return (
-    <header className="w-full py-5 px-4 md:px-8 bg-white sticky top-0 z-40 border-b border-gray-100">
-      <div className="flex items-center gap-3">
-          <div className="bg-gray-900 text-white p-2 rounded-lg">
-            <ShirtIcon className="w-6 h-6" />
+    <header className="w-full py-6 px-6 md:px-12 fixed top-0 z-50 pointer-events-none mix-blend-difference text-white">
+      <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 pointer-events-auto">
+             {/* Logo Mark */}
+              <div className="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center backdrop-blur-sm">
+                 <div className="w-2 h-2 bg-white rounded-full"></div>
+              </div>
+              <div>
+                <h1 className="text-xl font-serif tracking-[0.2em] leading-none text-white">
+                  CINEFIT
+                </h1>
+                <p className="text-[9px] text-white/60 font-mono tracking-widest uppercase mt-1">Production Suite v2.0</p>
+              </div>
           </div>
-          <div>
-            <h1 className="text-2xl font-serif tracking-widest text-gray-900">
-              CINEFIT STUDIO
-            </h1>
-            <p className="text-xs text-gray-500 font-sans tracking-wide uppercase">Digital Costume Department</p>
+          
+          <div className="hidden md:flex items-center gap-6 text-[10px] font-bold tracking-widest uppercase text-white/50">
+              <span>Script</span>
+              <span className="text-white">Design</span>
+              <span>Fitting</span>
+              <span>Export</span>
           </div>
       </div>
     </header>

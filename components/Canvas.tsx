@@ -89,6 +89,16 @@ const Canvas: React.FC<CanvasProps> = ({
   // 3. حالة العرض: صورة عادية (Standard Fit)
   return (
     <div className="w-full h-full flex items-center justify-center p-4 relative animate-zoom-in group">
+      {/* CSS Animation for Scanning Effect defined inline for scope */}
+      <style>{`
+        @keyframes scan {
+          0% { top: 0%; opacity: 0; }
+          10% { opacity: 1; }
+          90% { opacity: 1; }
+          100% { top: 100%; opacity: 0; }
+        }
+      `}</style>
+      
       {/* Start Over Button */}
       <button 
           onClick={onStartOver}

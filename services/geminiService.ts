@@ -3,69 +3,88 @@
  * SPDX-License-Identifier: Apache-2.0
 */
 
-import { GoogleGenAI, FunctionDeclaration, Type, Tool, Modality } from "@google/genai";
-import { DesignBrief, ProfessionalDesignResult, SimulationConfig } from "../types";
+import { GoogleGenAI, FunctionDeclaration, Type, Tool, Modality, SchemaType } from "@google/genai";
+import { DesignBrief, ProfessionalDesignResult, SimulationConfig, FitAnalysisResult, ImageGenerationSize } from "../types";
+import { fileToBase64 } from "../lib/utils";
 
 const API_KEY = process.env.API_KEY!;
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 // ==========================================
-// 1. MODULE: COSTUME DIRECTOR (Script Analysis)
+// 1. الوحدة: المخرج الفني (تحليل السيناريو)
 // ==========================================
 
-const realWeatherTool: FunctionDeclaration = {
-  name: "get_filming_location_conditions",
-  description: "Get the current weather for the filming location to determine fabric choice and actor comfort.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      location: {
-        type: Type.STRING,
-        description: "The city where filming is taking place.",
-      },
-    },
-    required: ["location"],
-  },
+/**
+ * Get real weather/location info using Gemini 3 Flash and Google Search Grounding.
+ */
+export const getRealWeatherWithSearch = async (location: string): Promise<{ temp: number; condition: string; location: string; sources: string[] }> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: `What is the current typical weather in ${location} this time of year? Return temperature in Fahrenheit and condition.`,
+            config: {
+                tools: [{ googleSearch: {} }],
+            },
+        });
+
+        // Extract sources
+        const sources: string[] = [];
+        if (response.candidates?.[0]?.groundingMetadata?.groundingChunks) {
+             response.candidates[0].groundingMetadata.groundingChunks.forEach((chunk: any) => {
+                 if (chunk.web?.uri) sources.push(chunk.web.uri);
+             });
+        }
+
+        // Parse text loosely as we just need a summary for the next step, or use a second call to structure it.
+        // For simplicity, we assume the text contains the info and we'll pass it to the Pro model.
+        // But to fit the Type structure, let's extract some mock values if parsing fails, or assume the Pro model
+        // will correct it. Here we just return the text description and sources.
+        
+        // We will default to a placeholder if search fails, but usually it returns text.
+        return {
+            temp: 0, // Will be inferred by Pro model from the context text
+            condition: response.text || "Unknown",
+            location: location,
+            sources: sources
+        };
+
+    } catch (e) {
+        console.warn("Weather search failed", e);
+        return { temp: 72, condition: "Sunny (Default)", location, sources: [] };
+    }
 };
 
-const tools: Tool[] = [{ functionDeclarations: [realWeatherTool] }];
-
-const mockWeatherService = (location: string) => {
-    const conditions = ["Sunny & Humid", "Overcast & Chilly", "Rainy", "Dry Heat", "Windy"];
-    const condition = conditions[Math.floor(Math.random() * conditions.length)];
-    const temp = Math.floor(Math.random() * (95 - 40) + 40);
-    return {
-        location: location,
-        temp: temp,
-        condition: condition
-    };
-};
-
+/**
+ * الدالة الرئيسية لتحليل السيناريو وتوليد تصميم الأزياء.
+ * Uses Gemini 3 Pro with Thinking Config for deep analysis.
+ */
 export const generateProfessionalDesign = async (brief: DesignBrief): Promise<ProfessionalDesignResult> => {
+  
+  // Step 1: Gather Real World Data (Search Grounding)
+  const weatherInfo = await getRealWeatherWithSearch(brief.filmingLocation);
+  
   const systemInstruction = `You are an expert AI Costume Stylist & Designer for Film/TV.
   Your Goal: Create a "Look" that fits the Drama (Script), Visuals (Camera), Production Reality (Budget/Weather), and **Character Psychology**.
 
   CORE LOGIC & CONSTRAINTS:
   1. **Psychological Mirroring:** The costume MUST reflect the character's internal arc, secrets, or transformation. How does the fit, texture, or condition expose their vulnerability or armor?
   2. **Script Rule:** Every item must have a dramatic reason.
-  3. **Weather/Location Rule:** You MUST adapt the fabrics/layers to the REAL weather of the location provided via the tool.
+  3. **Weather/Location Rule:** You MUST adapt the fabrics/layers to the REAL weather conditions provided: "${weatherInfo.condition}".
   4. **Continuity & Safety:** Consider stunts, multiple takes (copies needed), and actor safety (footwear).
   5. **Camera:** Avoid moire patterns (tight grids), pure white (burnout), or noisy fabrics unless requested.
-  6. **Language:** The output content MUST be in ARABIC (Formal & Professional terms), but the JSON keys must be in English.
+  6. **Language:** The output content MUST be in **Professional Egyptian Arabic** (for descriptions/rationale), but the JSON keys must be in English.
 
   OUTPUT FORMAT GUIDELINES:
-  - **dramaticDescription**: Write a compelling narrative explaining how this look visualizes the character's psychological state and the scene's mood. Do not just list items here; explain the *emotion* of the look.
-  - **rationale**: Include specific points linking garment choices to emotional beats (e.g., "Loose collar represents loss of control").
-  
-  Return a raw JSON object matching the schema provided. Do not use Markdown code blocks.
+  - **dramaticDescription**: Write a compelling narrative explaining how this look visualizes the character's psychological state and the scene's mood.
+  - **rationale**: Include specific points linking garment choices to emotional beats.
   `;
 
-  const model = 'gemini-2.5-flash';
+  // Use Thinking Config for complex reasoning
   const chat = ai.chats.create({
-    model: model,
+    model: 'gemini-3-pro-preview',
     config: {
       systemInstruction: systemInstruction,
-      tools: tools,
+      thinkingConfig: { thinkingBudget: 32768 }, // Max thinking for Pro
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -97,7 +116,15 @@ export const generateProfessionalDesign = async (brief: DesignBrief): Promise<Pr
                     budgetAlt: { type: Type.STRING }
                 }
             },
-            imagePrompt: { type: Type.STRING }
+            imagePrompt: { type: Type.STRING },
+            realWeather: {
+                type: Type.OBJECT,
+                properties: {
+                    temp: { type: Type.NUMBER },
+                    condition: { type: Type.STRING },
+                    location: { type: Type.STRING }
+                }
+            }
         }
       }
     },
@@ -109,33 +136,14 @@ export const generateProfessionalDesign = async (brief: DesignBrief): Promise<Pr
     [B] Character: Profile: ${brief.characterProfile}, Psychology: ${brief.psychologicalState}
     [C] Constraints: Location: ${brief.filmingLocation}, Notes: ${brief.productionConstraints}
     
-    Step 1: Call the weather tool for ${brief.filmingLocation}.
-    Step 2: Generate the costume design JSON in Arabic. 
-    **IMPORTANT:** In 'dramaticDescription' and 'rationale', explicitly explain how the costume reflects the character's psychological transformation in this scene.
-    Step 3: Include an English image prompt in the 'imagePrompt' field.
+    Data from Location Search: ${weatherInfo.condition}. Use this to infer 'realWeather' fields.
+    
+    Generate the design JSON.
   `;
 
-  let response = await chat.sendMessage({ message: prompt });
-
-  let realWeather = { temp: 70, condition: "Unknown", location: brief.filmingLocation };
-  const functionCalls = response.functionCalls;
-  if (functionCalls && functionCalls.length > 0) {
-      const call = functionCalls[0];
-      if (call.name === "get_filming_location_conditions") {
-          const args = call.args as any;
-          realWeather = mockWeatherService(args.location);
-          response = await chat.sendMessage({
-              message: [{
-                  functionResponse: {
-                      name: call.name,
-                      id: call.id,
-                      response: { result: realWeather }
-                  }
-              }]
-          });
-      }
-  }
-
+  const response = await chat.sendMessage({ message: prompt });
+  
+  // Parse JSON
   const jsonText = response.text;
   let designData: any;
   try {
@@ -145,6 +153,12 @@ export const generateProfessionalDesign = async (brief: DesignBrief): Promise<Pr
       throw new Error("Analysis failed. Please try again.");
   }
 
+  // Inject sources from the search step
+  if (designData.realWeather) {
+      designData.realWeather.sources = weatherInfo.sources;
+  }
+
+  // Generate Concept Art using Pro Image Model
   const imagePrompt = `
     Cinematic full body shot. Movie still.
     Subject: ${designData.imagePrompt || brief.characterProfile}.
@@ -153,9 +167,12 @@ export const generateProfessionalDesign = async (brief: DesignBrief): Promise<Pr
   `;
 
   const imageResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: 'gemini-3-pro-image-preview',
       contents: { parts: [{ text: imagePrompt }] },
-      config: { responseModalities: [Modality.IMAGE] }
+      config: { 
+          responseModalities: [Modality.IMAGE],
+          imageConfig: { imageSize: '2K' } // Default to high quality
+      }
   });
 
   let conceptArtUrl = '';
@@ -168,34 +185,17 @@ export const generateProfessionalDesign = async (brief: DesignBrief): Promise<Pr
     }
   }
 
-  return { ...designData, conceptArtUrl, realWeather };
+  return { ...designData, conceptArtUrl };
 };
 
-
 // ==========================================
-// 2. MODULE: REALISM ENGINE (Virtual Fitting & Simulation)
+// 2. الوحدة: محرك الواقعية (القياس والمحاكاة)
 // ==========================================
-
-// Helper to convert File to Base64
-const fileToBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-        const result = reader.result as string;
-        // Remove data URL prefix (e.g., "data:image/jpeg;base64,")
-        const base64 = result.split(',')[1];
-        resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-};
 
 /**
- * دالة توليد صورة لقطعة ملابس بناءً على وصف نصي.
- * تستخدم لتوسيع خزانة الملابس.
+ * Generate a garment image using Gemini 3 Pro Image.
  */
-export const generateGarmentAsset = async (description: string): Promise<string> => {
+export const generateGarmentAsset = async (description: string, size: ImageGenerationSize = '1K'): Promise<string> => {
     const prompt = `
         Generate a high-quality, photorealistic image of a single clothing item: ${description}.
         The item should be isolated on a plain white or transparent background.
@@ -206,9 +206,12 @@ export const generateGarmentAsset = async (description: string): Promise<string>
     `;
 
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
+        model: 'gemini-3-pro-image-preview',
         contents: { parts: [{ text: prompt }] },
-        config: { responseModalities: [Modality.IMAGE] }
+        config: { 
+            responseModalities: [Modality.IMAGE],
+            imageConfig: { imageSize: size }
+        }
     });
 
     let imageUrl = '';
@@ -229,7 +232,81 @@ export const generateGarmentAsset = async (description: string): Promise<string>
 };
 
 /**
- * دالة القياس الافتراضي مع دعم محرك المحاكاة الفيزيائية والإضاءة.
+ * Edit an existing garment image using text prompt (Nano Banana).
+ */
+export const editGarmentImage = async (file: File, editPrompt: string): Promise<string> => {
+    const base64Data = await fileToBase64(file);
+    const mimeType = file.type || 'image/png';
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+            parts: [
+                { inlineData: { mimeType, data: base64Data } },
+                { text: editPrompt }
+            ]
+        }
+    });
+
+    let imageUrl = '';
+    for (const candidate of response.candidates ?? []) {
+        for (const part of candidate.content?.parts ?? []) {
+            if (part.inlineData) {
+                imageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                break;
+            }
+        }
+    }
+
+    if (!imageUrl) throw new Error("Failed to edit image.");
+    return imageUrl;
+};
+
+
+/**
+ * Transcribe Audio using Gemini 3 Flash.
+ */
+export const transcribeAudio = async (audioFile: File): Promise<string> => {
+    const base64Data = await fileToBase64(audioFile);
+    
+    // Check if type is supported (wav, mp3, aac, flac, etc)
+    // Gemini supports common formats.
+    
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: {
+            parts: [
+                { inlineData: { mimeType: audioFile.type, data: base64Data } },
+                { text: "Transcribe this audio exactly as spoken." }
+            ]
+        }
+    });
+    
+    return response.text || "";
+};
+
+/**
+ * Analyze Video for Style/Content using Gemini 3 Pro.
+ */
+export const analyzeVideoContent = async (videoFile: File): Promise<string> => {
+    const base64Data = await fileToBase64(videoFile);
+    
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-preview',
+        contents: {
+            parts: [
+                { inlineData: { mimeType: videoFile.type, data: base64Data } },
+                { text: "Analyze this video. Describe the visual style, costume era, and general mood suitable for a costume design brief." }
+            ]
+        }
+    });
+    
+    return response.text || "";
+};
+
+
+/**
+ * Virtual Try-On using Image-to-Image.
  */
 export const generateVirtualFit = async (
     modelFile: File, 
@@ -241,7 +318,6 @@ export const generateVirtualFit = async (
     const modelBase64 = await fileToBase64(modelFile);
     const garmentBase64 = await fileToBase64(garmentFile);
 
-    // بناء أوامر المحاكاة بناءً على الإعدادات
     let physicsPrompt = "";
     if (simConfig) {
         physicsPrompt = `
@@ -309,22 +385,76 @@ export const generateVirtualFit = async (
 };
 
 /**
- * دالة اختبار الضغط الديناميكي (فيديو) باستخدام نموذج Veo.
- * تقوم بتوليد فيديو قصير يظهر الممثل يتحرك بالزي لاختبار الانسيابية.
+ * Safety & Comfort Analytics using Gemini 3 Pro (Image Understanding).
+ */
+export const analyzeFitCompatibility = async (
+    fittedImageUrl: string,
+    constraints: string = "None"
+): Promise<FitAnalysisResult> => {
+    // Extract base64
+    const base64Data = fittedImageUrl.split(',')[1];
+
+    const prompt = `
+    Analyze this generated costume fit image for a film production safety report.
+    
+    Actor Constraints Provided: "${constraints}"
+    
+    Evaluate the following criteria strictly:
+    1. **Safety:** Are there tripping hazards (too long), choking hazards (tight neck), or visibility issues?
+    2. **Comfort:** Does the fabric look too heavy, tight, or restrictive given the constraints?
+    3. **Movement:** Will this restrict running or fighting if required?
+
+    Return a JSON object with:
+    - compatibilityScore: (Number 0-100)
+    - safetyIssues: (Array of strings, e.g., "Hemline trip hazard")
+    - fabricNotes: (String description of how the fabric sits)
+    - movementPrediction: (String prediction of movement range)
+
+    Response Language: English for JSON keys, **Arabic** for values.
+    `;
+
+    const response = await ai.models.generateContent({
+        model: 'gemini-3-pro-preview', // Stronger model for analysis
+        contents: {
+            parts: [
+                { text: prompt },
+                { inlineData: { mimeType: 'image/png', data: base64Data } }
+            ]
+        },
+        config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                    compatibilityScore: { type: Type.NUMBER },
+                    safetyIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    fabricNotes: { type: Type.STRING },
+                    movementPrediction: { type: Type.STRING }
+                }
+            }
+        }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Analysis failed to generate text.");
+    
+    return JSON.parse(text) as FitAnalysisResult;
+};
+
+/**
+ * Stress Test Video using Veo.
  */
 export const generateStressTestVideo = async (
     fittedImageUrl: string,
     actionType: string
 ): Promise<string> => {
     
-    // تحويل Data URL إلى Base64 خام
     const base64Data = fittedImageUrl.split(',')[1];
 
     const prompt = `A cinematic video of this character ${actionType}. 
     Focus on the fabric movement, weight, and lighting interaction. 
     High quality, photorealistic 1080p, film grain.`;
 
-    // 1. بدء عملية التوليد
     let operation = await ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         image: {
@@ -339,21 +469,16 @@ export const generateStressTestVideo = async (
         }
     });
 
-    // 2. حلقة الانتظار (Polling)
-    console.log("Starting video generation...");
     while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 5000)); // انتظار 5 ثواني
+        await new Promise(resolve => setTimeout(resolve, 5000));
         operation = await ai.operations.getVideosOperation({ operation: operation });
-        console.log("Polling video status...");
     }
 
-    // 3. استخراج الرابط
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
     
     if (!downloadLink) {
         throw new Error("Video generation failed or no URI returned.");
     }
 
-    // إرفاق مفتاح API للتحميل
     return `${downloadLink}&key=${API_KEY}`;
 };

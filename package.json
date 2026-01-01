@@ -18,7 +18,11 @@
     "tailwind-merge": "^2.4.0",
     "@tsparticles/react": "^3.0.0",
     "@tsparticles/engine": "^3.5.0",
-    "@tsparticles/slim": "^3.5.0"
+    "@tsparticles/slim": "^3.5.0",
+    "@react-three/fiber": "^9.5.0",
+    "recharts": "^3.6.0",
+    "three": "^0.182.0",
+    "@react-three/drei": "^10.7.7"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
